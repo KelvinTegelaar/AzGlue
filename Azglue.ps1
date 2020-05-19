@@ -37,7 +37,7 @@ if ($request.Headers.'x-api-key' -eq $ENV:AzAPIKey) {
             $rand = get-random -Minimum 0 -Maximum 10
             start-sleep $rand
             $attempt--
-            if ($attempt -eq 0) { $ITGlueRequest = @{'Errorcode' = "Error code $($_.Exception.Response.StatusCode.value__) - Made 3 attempts and upload failed. $($_.Exception.Message) " } }
+            if ($attempt -eq 0) { $ITGlueRequest = @{'Errorcode' = "Error code $($_.Exception.Response.StatusCode.value__) - Made 3 attempts and upload failed. $($_.Exception.Message) / Resource was $($ENV:ITGlueURI)/$resource" } }
         }
     }
  
