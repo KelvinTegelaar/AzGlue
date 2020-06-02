@@ -1,9 +1,15 @@
 using namespace System.Net
 param($Request, $TriggerMetadata)
-#Check if AZapiKey is correct
-if ($request.Headers.'x-api-key' -eq $ENV:AzAPIKey) {
+
+#Check if the client's API token matches our stored version and that it's not too short.
+#Without this check, an empty or missing environmental variable would allow unauthenticated access.
+if ($request.Headers.'x-api-key' -eq $ENV:AzAPIKey -and $ENV:AzAPIKey.Length -gt 12) {
     #Comparing the client IP to the Organization list, and checking if it exists.
     $ClientIP = ($request.headers.'X-Forwarded-For' -split ':')[0]
+    #When working locally set client IP to "    localtesting".
+    if (-not $ClientIP -and $request.url.StartsWith("http://localhost:")) {
+        $ClientIP = "localtesting"
+    }
     $CompareList = import-csv "AzGlueForwarder\OrgList.csv" -delimiter ","
     $AllowedOrgs = $comparelist | where-object { $_.ip -eq $ClientIP }
     if (!$AllowedOrgs) { 
@@ -17,7 +23,10 @@ if ($request.Headers.'x-api-key' -eq $ENV:AzAPIKey) {
  
     #Sending request to ITGlue
     #$resource = $request.params.path -replace "AzGlueForwarder/", ""
-    $resource = $request.url -replace "https://$($ENV:WEBSITE_HOSTNAME)/API", ""
+
+    #get the resource URI. "https?" allows it to work locally and remotely. Removing the trailing slash
+    #now avoids issues later when we join the base URI and resource string with a forwardslash.  
+    $resource = $request.url -replace "https?://$($ENV:WEBSITE_HOSTNAME)/API/", ""
     #Replace x-api-key with actual key
     $ITGHeaders = @{
         "x-api-key" = $ENV:ITGlueAPIKey
@@ -41,13 +50,25 @@ if ($request.Headers.'x-api-key' -eq $ENV:AzAPIKey) {
         }
     }
  
-    #Checking if we can strip the data that does not belong to this client. 
+    #Where possible, strip the data that does not belong to this client. 
     #Important so passwords/items can only be retrieved belonging to this organisation.
-    #Can't do it for all requests, such as get-organisation, but for senstive data it works perfectly. :)
+    #Can't do it for all requests.
  
-    if ($($ITGlueRequest.data.attributes.'organization-id')) {
-        write-host ($AllowedOrgs.ITGlueOrgID)
-        $ITGlueRequest.data = $ITGlueRequest.data | where-object { $_.attributes.'organization-id' -in $($AllowedOrgs.ITGlueOrgID) }    
+    # I've updated this code so that it filters organizations as well as config/password/flex assets. 
+    # There is a bug in the original "$ITGlueRequest.data.attributes.'organization-id'" check which will filter some records unintuitively.
+    # If you request data from an object which doesn't contain the .data.attributes.'organization-id' property, and only returns
+    # a single record, it will be returned to the client. If you request data from the same object but IT Glue returns multiple 
+    # records, they will all be excluded from the returned data. This is because IT Glue wraps multiple records in an array of data 
+    # records, and when checking to see if the attribute is set, PowerShell returns an array or nulls, which is not equal to null, 
+    # and so passes the check. I am not fixing the bug because I intend to restrict this further anyway, and until then I don't want
+    # to expose more data than the original function does.
+    # this would fix it: if ($ITGlueRequest.data[0].attributes.'organization-id' -or ...
+
+    if ($ITGlueRequest.data.attributes.'organization-id' -or $ITGlueRequest.data.type -contains "organizations") {
+        $ITGlueRequest.data = $ITGlueRequest.data | Where-Object {
+            ($_.type -eq "organizations" -and $_.id -in $AllowedOrgs.ITGlueOrgID) -or
+            ($_.attributes.'organization-id' -in $AllowedOrgs.ITGlueOrgID)
+        }
     }
  
     #Sending the final object back to the client.
