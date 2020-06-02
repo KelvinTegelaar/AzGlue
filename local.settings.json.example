@@ -1,0 +1,10 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "",
+    "FUNCTIONS_WORKER_RUNTIME": "powershell",
+    "AzAPIKey": "<Key for client machines to authenticate against this gateway>",
+    "ITGlueAPIKey": "<IT Glue API key>",
+    "ITGlueURI": "https://api.itglue.com"
+  }
+}
