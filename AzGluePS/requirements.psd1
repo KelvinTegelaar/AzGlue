@@ -3,4 +3,5 @@
 #
 @{
     'Az' = '4.*'
+    'powershell-yaml' = '0.4.2'
 }

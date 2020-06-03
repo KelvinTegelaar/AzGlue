@@ -1,0 +1,72 @@
+passwords:
+  endpoints:
+  - /passwords
+  - /passwords/:id
+  - /organizations/:id/relationships/passwords
+  - /organizations/:id/relationships/passwords/:id
+  methods: 
+  - GET
+  - POST
+  - PATCH
+  allowed_parameters:
+  - filter[id]
+  - filter[name]
+  - filter[organization_id]
+  - filter[password_category_id]
+  - filter[url]
+  - filter[cached_resource_name]
+  - sort
+  - page[number]
+  - page[size]
+  required_parameters:
+  - show_passwords: "false"
+  createbody:
+    data:
+    - type: string
+      attributes:
+        name: string
+        username: string
+        password: string
+        url: string
+        notes: string
+        password-category-id: int 
+        password-category-name: string
+  returnbody:
+    data:
+    - type: string
+      id: int
+      attributes:
+        username: string
+        name: string
+        organization-id: int
+        url: string
+        notes: string
+        created-at: datetime
+        updated-at: datetime
+        password-updated-at: datetime
+
+organizations:
+  endpoints:
+  - /organizations
+  - /organizations/:id
+  methods:
+  - GET
+  allowed_parameters:
+  - filter[id]
+  - filter[name]
+  - filter[organization_type_id]
+  - filter[organization_status_id]
+  - filter[psa_id]
+  - sort
+  - page[number]
+  - page[size]
+  returnbody:
+    data:
+    - type: string
+      id: int
+      attributes:
+        name: string
+        organization-type-id: int
+        organization-type-name: string
+        updated-at: datetime
+        created-at: datetime

@@ -1,90 +1,145 @@
 using namespace System.Net
 param($Request, $TriggerMetadata)
 
-#Check if the client's API token matches our stored version and that it's not too short.
-#Without this check, an empty or missing environmental variable would allow unauthenticated access.
-if ($request.Headers.'x-api-key' -eq $ENV:AzAPIKey -and $ENV:AzAPIKey.Length -gt 12) {
-    #Comparing the client IP to the Organization list, and checking if it exists.
-    $ClientIP = ($request.headers.'X-Forwarded-For' -split ':')[0]
-    #When working locally set client IP to "    localtesting".
-    if (-not $ClientIP -and $request.url.StartsWith("http://localhost:")) {
-        $ClientIP = "localtesting"
-    }
-    $CompareList = import-csv "AzGlueForwarder\OrgList.csv" -delimiter ","
-    $AllowedOrgs = $comparelist | where-object { $_.ip -eq $ClientIP }
-    if (!$AllowedOrgs) { 
-        Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
-                headers    = @{'content-type' = 'application\json' }
-                StatusCode = [httpstatuscode]::OK
-                Body       = @{"Error" = "401 - No match found in allowed list" } | convertto-json
-            })
-        exit 1
-    }
- 
-    #Sending request to ITGlue
-    #$resource = $request.params.path -replace "AzGlueForwarder/", ""
+# TEMP: DEBUG
+Write-Host ($request | convertto-json -depth 5)
 
-    #get the resource URI. "https?" allows it to work locally and remotely. Removing the trailing slash
-    #now avoids issues later when we join the base URI and resource string with a forwardslash.  
-    $resource = $request.url -replace "https?://$($ENV:WEBSITE_HOSTNAME)/API/", ""
-    #Replace x-api-key with actual key
-    $ITGHeaders = @{
-        "x-api-key" = $ENV:ITGlueAPIKey
-    } 
-    $Method = $($Request.method)
-    $ITGBody = $($Request.body)
-    #write-host ($AllowedOrgs | out-string)
-    $SuccessfullQuery = $false
-    $attempt = 3
-    while ($attempt -gt 0 -and -not $SuccessfullQuery) {
-        try {
-            $ITGlueRequest = Invoke-RestMethod -Method $Method -ContentType "application/vnd.api+json" -Uri "$($ENV:ITGlueURI)/$resource" -Body $ITGBody -Headers $ITGHeaders
-            $SuccessfullQuery = $true
-        }
-        catch {
-            $ITGlueRequest = @{'Errorcode' = $_.Exception.Response.StatusCode.value__ }
-            $rand = get-random -Minimum 0 -Maximum 10
-            start-sleep $rand
-            $attempt--
-            if ($attempt -eq 0) { $ITGlueRequest = @{'Errorcode' = "Error code $($_.Exception.Response.StatusCode.value__) - Made 3 attempts and upload failed. $($_.Exception.Message) / Resource was $($ENV:ITGlueURI)/$resource" } }
-        }
-    }
- 
-    #Where possible, strip the data that does not belong to this client. 
-    #Important so passwords/items can only be retrieved belonging to this organisation.
-    #Can't do it for all requests.
- 
-    # I've updated this code so that it filters organizations as well as config/password/flex assets. 
-    # There is a bug in the original "$ITGlueRequest.data.attributes.'organization-id'" check which will filter some records unintuitively.
-    # If you request data from an object which doesn't contain the .data.attributes.'organization-id' property, and only returns
-    # a single record, it will be returned to the client. If you request data from the same object but IT Glue returns multiple 
-    # records, they will all be excluded from the returned data. This is because IT Glue wraps multiple records in an array of data 
-    # records, and when checking to see if the attribute is set, PowerShell returns an array or nulls, which is not equal to null, 
-    # and so passes the check. I am not fixing the bug because I intend to restrict this further anyway, and until then I don't want
-    # to expose more data than the original function does.
-    # this would fix it: if ($ITGlueRequest.data[0].attributes.'organization-id' -or ...
+Function ImmediateFailure ($message) {
+    Write-Host $message
+    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
+        headers    = @{'content-type' = 'application\json' }
+        StatusCode = [httpstatuscode]::OK
+        Body       = @{"Error" = $message } | convertto-json
+    })
+    exit 1
+}
 
-    if ($ITGlueRequest.data.attributes.'organization-id' -or $ITGlueRequest.data.type -contains "organizations") {
-        $ITGlueRequest.data = $ITGlueRequest.data | Where-Object {
-            ($_.type -eq "organizations" -and $_.id -in $AllowedOrgs.ITGlueOrgID) -or
-            ($_.attributes.'organization-id' -in $AllowedOrgs.ITGlueOrgID)
-        }
+function Build-Body ($whitelistObj, $sourceObj) {
+    if (-not $sourceObj) {
+        Return
     }
- 
-    #Sending the final object back to the client.
-    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
-            headers    = @{'content-type' = 'application\json' }
-            StatusCode = [httpstatuscode]::OK
-            Body       = $ITGlueRequest
-        })
- 
- 
+    if ($whitelistObj -is [hashtable] -or $whitelistObj -is [System.Collections.Specialized.OrderedDictionary]) {
+        $newObject = @{}
+        foreach ($key in $whitelistObj.keys) {
+            if ($sourceObj.$key) {
+                $newObject[$key] = Build-Body $whitelistObj[$key] $sourceObj.$key
+            }
+        }
+    } elseif ($whitelistObj -is [System.Collections.Generic.List`1[System.Object]]) {
+        $newObject = @()
+        foreach ($item in $sourceObj) {
+            $newObject += Build-Body $whitelistObj[0] $item
+        }
+    } elseif ($whitelistObj -is [string]) {
+        $newObject = $sourceObj
+    } else {
+        Write-Error "Unexpected type found $whitelistObj"
+    }
+    Return $newObject
 }
-else {
-    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
-            headers    = @{'content-type' = 'application\json' }
-            StatusCode = [httpstatuscode]::OK
-            Body       = @{"Error" = "401 - No API Key entered or API key incorrect." } | convertto-json
-        })
-     
+
+$clientToken = $request.headers.'x-api-key'
+
+# Check if the client's API token matches our stored version and that it's not too short.
+# Without this check, a misconfigured environmental variable could allow unauthenticated access.
+# TODO: Set up a unique key per client, with each key linked to an array of org IDs and IP addresses.
+if ($ENV:AzAPIKey.Length -lt 14 -or $clientToken -ne $ENV:AzAPIKey) {
+    ImmediateFailure "401 - API token does not match"
 }
+
+# Get the client's IP address
+$ClientIP = ($request.headers.'X-Forwarded-For' -split ':')[0]
+if (-not $ClientIP -and $request.url.StartsWith("http://localhost:")) {
+    $ClientIP = "localtesting"
+}
+# Check the client's IP against the IP/org whitelist.
+$OrgList = import-csv "AzGlueForwarder\OrgList.csv" -delimiter ","
+$AllowedOrgs = $OrgList | where-object { $_.ip -eq $ClientIP }
+if (!$AllowedOrgs) { 
+    ImmediateFailure "No match found in allowed list"
+}
+
+## Whitelisting endpoints & data.
+# TODO: This takes about 800ms to import the first time. Need to confirm that subsequent queries are faster.
+Measure-Command { Import-Module powershell-yaml -Function ConvertFrom-Yaml }
+$endpoints = Get-Content .\whitelisted-endpoints.yml | ConvertFrom-Yaml
+
+$resourceUri = $request.Query.ResourceURI
+$resourceUri_generic = ([string]$resourceUri).TrimEnd("/") -replace "/\d+","/:id"
+
+# Check to see if the called API endpoint & method has been whitelisted.
+foreach ($key in $endpoints.keys) {
+    if ($endpoints[$key].endpoints -contains $resourceUri_generic -and $endpoints[$key].methods -contains $request.Method) {
+        $endpointKey = $key
+        break
+    }
+}
+if (-not $endpointKey) {
+    ImmediateFailure "401 - Unauthorized endpoint or method"
+}
+
+# Build new query string from required and whitelisted parameters
+$itgQuery = [System.Web.HttpUtility]::ParseQueryString([String]::Empty)
+foreach ($filter in $endpoints[$endpointKey].required_parameters.Keys) {
+    Write-Host $filter
+    $itgQuery.Add($filter, $endpoints[$endpointKey].required_parameters.$filter)
+}
+foreach ($filter in $endpoints[$endpointKey].allowed_parameters) {
+    Write-Host $filter
+    if ($request.Query.$filter) {
+        $itgQuery.Add($filter, $request.Query.$filter)
+    }
+}
+
+# Combine resource URI and query string
+$uriBuilder = [System.UriBuilder]("{0}{1}" -f $ENV:ITGlueURI,$resourceUri)
+$uriBuilder.Query = $itgQuery.ToString()
+$itgUri = $uriBuilder.Uri.OriginalString
+
+# Construct new request for IT Glue
+# TODO: Move this to Key Vault
+$itgHeaders = @{"x-api-key" = $ENV:ITGlueAPIKey}
+$itgMethod = $Request.method
+$oldBody = $request.body | convertfrom-json
+$itgBody = Build-Body $endpoints[$endpointKey].createbody $oldBody
+$itgBodyJson = $itgBody | ConvertTo-Json -Depth 5
+Write-Information "Outgoing body: $itgBodyJson"
+
+# Send request to IT Glue
+$SuccessfullQuery = $false
+$attempt = 2
+while ($attempt -gt 0 -and -not $SuccessfullQuery) {
+    try {
+        $itgRequest = Invoke-RestMethod -Method $itgMethod -ContentType "application/vnd.api+json" -Uri $itgUri -Body $itgBodyJson -Headers $itgHeaders
+        $SuccessfullQuery = $true
+    } catch {
+        $attempt--
+        if ($attempt -eq 0) {
+            # don't include $_.Exception.Message to avoid leaking any unexpected information.
+            ImmediateFailure "$($_.Exception.Response.StatusCode.value__) - Failed after 3 attempts to $itgUri." 
+        }
+        start-sleep (get-random -Minimum 0 -Maximum 10)
+    }
+}
+
+# For organization specific data, only return records linked to the authorized client.
+if ($itgRequest.data.type -contains "organizations" -or 
+    $itgRequest.data[0].attributes.'organization-id') {
+
+    $itgRequest.data = $itgRequest.data | Where-Object {
+        ($_.type -eq "organizations" -and $_.id -in $allowedOrgs.ITGlueOrgID) -or
+        ($_.attributes.'organization-id' -in $allowedOrgs.ITGlueOrgID)
+    }
+}
+
+# Strip out any paramaters from the body which haven't been explicitly whitelisted.
+$itgReturnBody = Build-Body $endpoints[$endpointKey].returnbody $itgRequest
+if ($itgRequest.meta) {$itgReturnBody.meta = $itgRequest.meta}
+if ($itgRequest.links) {$itgReturnBody.links = $itgRequest.links}
+
+# Return the final object.
+Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
+    headers    = @{'content-type' = 'application\json' }
+    StatusCode = [httpstatuscode]::OK
+    Body       = $itgReturnBody
+})
