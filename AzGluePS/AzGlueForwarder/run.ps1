@@ -1,43 +1,61 @@
 using namespace System.Net
 param($Request, $TriggerMetadata)
 
-# TEMP: DEBUG
-Write-Host ($request | convertto-json -depth 5)
+Write-Information ("Incoming {0} {1}" -f $Request.Method,$Request.Url)
 
-Function ImmediateFailure ($message) {
-    Write-Host $message
+Function ImmediateFailure ($Message) {
+    Write-Error $Message
     Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
         headers    = @{'content-type' = 'application\json' }
         StatusCode = [httpstatuscode]::OK
-        Body       = @{"Error" = $message } | convertto-json
+        Body       = @{"Error" = $Message } | convertto-json
     })
     exit 1
 }
 
-function Build-Body ($whitelistObj, $sourceObj) {
+function Build-Body ($whitelistObj, $sourceObj, $depth) {
+    # store a depth counter to avoid looping.
+    if ($depth -isnot [int]) {
+        $depth = 1
+    } else {
+        $depth++
+    }
+    if ($depth -gt 8) {
+        Write-Error "Possible recursion loop or source object is deeper than expected."
+        Return
+    } 
     if (-not $sourceObj) {
         Return
     }
     if ($whitelistObj -is [hashtable] -or $whitelistObj -is [System.Collections.Specialized.OrderedDictionary]) {
+        # When the whitelist object is a dictionary, loop over the keys and if they exist in the 
+        # source object, recurse. Note that any extra keys will not be checked or logged.
+        $counter = 0
         $newObject = @{}
         foreach ($key in $whitelistObj.keys) {
             if ($sourceObj.$key) {
-                $newObject[$key] = Build-Body $whitelistObj[$key] $sourceObj.$key
+                $counter++
+                $newObject[$key] = Build-Body -whitelistObj $whitelistObj[$key] -sourceObj $sourceObj.$key -depth $depth
             }
+            Write-Debug ("{0}/{1} keys were whitelisted from the source dictionary." -f $counter, $sourceObj.length)
         }
-    } elseif ($whitelistObj -is [System.Collections.Generic.List`1[System.Object]]) {
+    } elseif ($whitelistObj -is [System.Collections.Generic.List`1[System.Object]] -and $whitelistObj.length -eq 1) {
+        # When the whitelist object is a list with a single member, loop over the source and store the results in an array.
         $newObject = @()
         foreach ($item in $sourceObj) {
-            $newObject += Build-Body $whitelistObj[0] $item
+            $newObject += Build-Body -whitelistObj $whitelistObj[0] -sourceObj $item -depth $depth
         }
     } elseif ($whitelistObj -is [string]) {
+        # When the whitelist object is a string, store the value of the source object and move on.
+        # Mote that if the value is a list/dict, it will still add everything.
+        # TODO: Validate source object data types.
         $newObject = $sourceObj
     } else {
-        Write-Error "Unexpected type found $whitelistObj"
+        Write-Error "Unexpected format of whitelist object. Check your configuration: $($whitelistObj | ConvertTo-Json -Depth 2)"
+        Return
     }
     Return $newObject
 }
-
 $clientToken = $request.headers.'x-api-key'
 
 # Check if the client's API token matches our stored version and that it's not too short.
@@ -60,12 +78,14 @@ if (!$AllowedOrgs) {
 }
 
 ## Whitelisting endpoints & data.
-# TODO: This takes about 800ms to import the first time. Need to confirm that subsequent queries are faster.
-Measure-Command { Import-Module powershell-yaml -Function ConvertFrom-Yaml }
+Import-Module powershell-yaml -Function ConvertFrom-Yaml
 $endpoints = Get-Content .\whitelisted-endpoints.yml | ConvertFrom-Yaml
 
 $resourceUri = $request.Query.ResourceURI
 $resourceUri_generic = ([string]$resourceUri).TrimEnd("/") -replace "/\d+","/:id"
+
+# Log the body of the request if the debug level is trace. 
+Write-Verbose ("Incoming Body: {0}" -f ($Request.Body|ConvertTo-Json -depth 6))
 
 # Check to see if the called API endpoint & method has been whitelisted.
 foreach ($key in $endpoints.keys) {
@@ -81,11 +101,9 @@ if (-not $endpointKey) {
 # Build new query string from required and whitelisted parameters
 $itgQuery = [System.Web.HttpUtility]::ParseQueryString([String]::Empty)
 foreach ($filter in $endpoints[$endpointKey].required_parameters.Keys) {
-    Write-Host $filter
     $itgQuery.Add($filter, $endpoints[$endpointKey].required_parameters.$filter)
 }
 foreach ($filter in $endpoints[$endpointKey].allowed_parameters) {
-    Write-Host $filter
     if ($request.Query.$filter) {
         $itgQuery.Add($filter, $request.Query.$filter)
     }
@@ -95,30 +113,38 @@ foreach ($filter in $endpoints[$endpointKey].allowed_parameters) {
 $uriBuilder = [System.UriBuilder]("{0}{1}" -f $ENV:ITGlueURI,$resourceUri)
 $uriBuilder.Query = $itgQuery.ToString()
 $itgUri = $uriBuilder.Uri.OriginalString
+Write-Information ("Outgoing {0} {1}" -f $Request.Method,$itgUri)
 
 # Construct new request for IT Glue
-# TODO: Move this to Key Vault
 $itgHeaders = @{"x-api-key" = $ENV:ITGlueAPIKey}
-$itgMethod = $Request.method
-$oldBody = $request.body | convertfrom-json
-$itgBody = Build-Body $endpoints[$endpointKey].createbody $oldBody
-$itgBodyJson = $itgBody | ConvertTo-Json -Depth 5
-Write-Information "Outgoing body: $itgBodyJson"
+$itgMethod = $Request.Method
+if ($request.body) {
+    $oldBody = $request.body | convertfrom-json
+    $itgBody = Build-Body $endpoints[$endpointKey].createbody $oldBody
+    $itgBodyJson = $itgBody | ConvertTo-Json -Depth 6
+} else {
+    $itgBodyJson = $null
+}
+
+# Log outgoing body if the debug level is trace. 
+Write-Verbose "Outgoing body: $itgBodyJson"
 
 # Send request to IT Glue
 $SuccessfullQuery = $false
 $attempt = 2
 while ($attempt -gt 0 -and -not $SuccessfullQuery) {
     try {
-        $itgRequest = Invoke-RestMethod -Method $itgMethod -ContentType "application/vnd.api+json" -Uri $itgUri -Body $itgBodyJson -Headers $itgHeaders
+        $itgRequest = Invoke-RestMethod -Method $itgMethod -ContentType "application/vnd.api+json" `
+                                        -Uri $itgUri -Body $itgBodyJson -Headers $itgHeaders
         $SuccessfullQuery = $true
     } catch {
         $attempt--
         if ($attempt -eq 0) {
-            # don't include $_.Exception.Message to avoid leaking any unexpected information.
-            ImmediateFailure "$($_.Exception.Response.StatusCode.value__) - Failed after 3 attempts to $itgUri." 
+            Write-Debug $_.Exception.Message
+            # don't respond with $_.Exception.Message to avoid leaking any unexpected information.
+            ImmediateFailure "$($_.Exception.Response.StatusCode.value__) - Failed after 2 attempts to $itgUri." 
         }
-        start-sleep (get-random -Minimum 0 -Maximum 10)
+        start-sleep (get-random -Minimum 1 -Maximum 10)
     }
 }
 
@@ -133,9 +159,20 @@ if ($itgRequest.data.type -contains "organizations" -or
 }
 
 # Strip out any paramaters from the body which haven't been explicitly whitelisted.
-$itgReturnBody = Build-Body $endpoints[$endpointKey].returnbody $itgRequest
-if ($itgRequest.meta) {$itgReturnBody.meta = $itgRequest.meta}
-if ($itgRequest.links) {$itgReturnBody.links = $itgRequest.links}
+if ($endpoints[$endpointKey].returnbody) {
+    $itgReturnBody = Build-Body $endpoints[$endpointKey].returnbody $itgRequest
+    if ($itgRequest.meta) {
+        $itgReturnBody.meta = $itgRequest.meta
+    }
+    if ($itgRequest.links) {
+        $itgReturnBody.links = $itgRequest.links
+    }
+} else {
+    $itgReturnBody = @{}
+}
+
+# Log response body if the debug level is trace. 
+Write-Verbose ("Response body: {0}" -f ($itgReturnBody | Convertto-Json -Depth 6))
 
 # Return the final object.
 Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
