@@ -1,11 +1,12 @@
 # AzGlue, a secure API gateway for IT Glue
-This project has been forked from [Kelvin Tegelaar](https://github.com/KelvinTegelaar)'s repo hosted on [KelvinTegelaar/AzGlue](https://github.com/KelvinTegelaar/AzGlue) and originally posted to his (fantasic) blog [cyberdrain.com](https://www.cyberdrain.com/documenting-with-powershell-handling-it-glue-api-security-and-rate-limiting/).
 
-The first release will maintain backwards compatibilty with Kelvin's existing gateway and public scripts. 
+This project was made by [Kelvin Tegelaar](https://github.com/KelvinTegelaar)'s repo hosted on [KelvinTegelaar/AzGlue](https://github.com/KelvinTegelaar/AzGlue) and originally posted to his on blog [cyberdrain.com](https://www.cyberdrain.com/documenting-with-powershell-handling-it-glue-api-security-and-rate-limiting/).
 
-Once this is complete, I will be implmenting some new features which would require existing scripts to be reworked.
+The current version is a result of merging Angus Warrens version with many security improvements, and ([Anguswarren/AzGlue]) and Kelvin's repo.
 
-### Goals for first release:
+The current release tries to maintain backwards compatibilty with Kelvin's existing gateway and public scripts. In the future, There might be changes that require deeper moditifation of the AzGlue function which does not allow to retain backwards compatbility. 
+
+### Changes made/planned by [AngusWarren]:
 - [x] Allow local dev, testing and deployment with VSCode's [Azure Functions extension](https://marketplace.visualstudio.com/items?itemName=ms-azuretools.vscode-azurefunctions).
 - [x] Prevent misconfigured gateways from accepting empty API keys.
 - [x] Restrict returned data from the /organizations endpoint to honor OrgId whitelisting.
@@ -91,3 +92,6 @@ After my previous blogs the comment I’ve received most was worries about the A
 - The solution needed to be able to used, without adapting any scripts (except URLs and API codes.)
 - So after some research I decided to use an Azure Function for this. I’ve blogged about Azure Functions before, but the main reason is that running this function in the consumption model will cost us nothing (or next to nothing if you are an extremely heavy user.)
 
+### Contributions & Thanks
+
+The project is open to any PR and/or direct contributors. Feel free to contact kelvin (at) limenetworks.nl if you'd like to be a direct contributor. Special thanks goes out to [AngusWarren] for the amazing changes to the security of the AzGlue function. 
