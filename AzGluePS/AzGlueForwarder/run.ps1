@@ -65,16 +65,19 @@ if ($ENV:AzAPIKey.Length -lt 14 -or $clientToken -ne $ENV:AzAPIKey) {
     ImmediateFailure "401 - API token does not match"
 }
 
-# Get the client's IP address
-$ClientIP = ($request.headers.'X-Forwarded-For' -split ':')[0]
-if (-not $ClientIP -and $request.url.StartsWith("http://localhost:")) {
-    $ClientIP = "localtesting"
-}
-# Check the client's IP against the IP/org whitelist.
-$OrgList = import-csv "AzGlueForwarder\OrgList.csv" -delimiter ","
-$AllowedOrgs = $OrgList | where-object { $_.ip -eq $ClientIP }
-if (!$AllowedOrgs) { 
-    ImmediateFailure "No match found in allowed list"
+$DISABLE_ORGLIST_CSV = ($Env:DISABLE_ORGLIST_CSV -and (($Env:DISABLE_ORGLIST_CSV).ToLower() -eq 'true'))
+If (-not $DISABLE_ORGLIST_CSV) {
+    # Get the client's IP address
+    $ClientIP = ($request.headers.'X-Forwarded-For' -split ':')[0]
+    if (-not $ClientIP -and $request.url.StartsWith("http://localhost:")) {
+        $ClientIP = "localtesting"
+    }
+    # Check the client's IP against the IP/org whitelist.
+    $OrgList = import-csv "AzGlueForwarder\OrgList.csv" -delimiter ","
+    $AllowedOrgs = $OrgList | where-object { $_.ip -eq $ClientIP }
+    if (!$AllowedOrgs) { 
+        ImmediateFailure "No match found in allowed list"
+    }
 }
 
 ## Whitelisting endpoints & data.
