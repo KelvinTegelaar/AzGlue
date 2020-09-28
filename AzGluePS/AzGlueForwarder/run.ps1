@@ -65,7 +65,7 @@ if ($ENV:AzAPIKey.Length -lt 14 -or $clientToken -ne $ENV:AzAPIKey) {
     ImmediateFailure "401 - API token does not match"
 }
 
-$DISABLE_ORGLIST_CSV = ($Env:DISABLE_ORGLIST_CSV -and (($Env:DISABLE_ORGLIST_CSV).ToLower() -eq 'true'))
+$DISABLE_ORGLIST_CSV = ($ENV:DISABLE_ORGLIST_CSV -and (($ENV:DISABLE_ORGLIST_CSV).ToLower() -eq 'true'))
 If (-not $DISABLE_ORGLIST_CSV) {
     # Get the client's IP address
     $ClientIP = ($request.headers.'X-Forwarded-For' -split ':')[0]
