@@ -6,44 +6,14 @@ The current version is a result of merging Angus Warrens version with many secur
 
 The current release tries to maintain backwards compatibilty with Kelvin's existing gateway and public scripts. In the future, There might be changes that require deeper moditifation of the AzGlue function which does not allow to retain backwards compatbility. 
 
-### Changes made/planned by [AngusWarren]:
-- [x] Allow local dev, testing and deployment with VSCode's [Azure Functions extension](https://marketplace.visualstudio.com/items?itemName=ms-azuretools.vscode-azurefunctions).
-- [x] Prevent misconfigured gateways from accepting empty API keys.
-- [x] Restrict returned data from the /organizations endpoint to honor OrgId whitelisting.
-- [x] Allow clients to post new passwords without allowing them to retrieve existing passwords.
-- [x] Allow whitelisting specific API endpoints.
-- [x] When relaying requests, allow per-endpoint filtering and validation of:
-  - [x] Supported HTTP methods (POST/PATCH/PUT/DELETE).
-  - [x] Query string paramaters.
-  - [x] Payload data sent to IT Glue.
-  - [x] Payload data returned to the client.
-- [x] Move IT Glue API key to Azure Key Vault.
-- [ ] Set up default whitelisted-endpoints.yml file to work with Kelvin Tegelaar's existing scripts.
-
-### Goals for second release:
-- [ ] Per-client API keys  
-- [ ] System to only returned data relevant to the specific PC making the request.
-
-### Progress setting up whitelisted-endpoints.yml defaults:
-  - [x] IT-Glue-ADDS-Documentation.ps1
-  - [ ] IT-Glue-ADGroups-Documentation.ps1
-  - [ ] IT-Glue-AzureADSettings-Documentation.ps1
-  - [x] IT-glue-BitLocker-Documentation.ps1
-  - [x] ITGlue-Device-AuditLog.ps1
-  - [x] ITGlue-DeviceSync.ps1
-  - [x] IT-Glue-FileSharePermissions-Documentation.ps1
-  - [x] IT-Glue-HyperV-Documentation.ps1
-  - [ ] IT-Glue-intuneApplication-Documentation.ps1
-  - [x] IT-Glue-LAPSAlternative-Documentation.ps1
-  - [ ] IT-Glue-Network-Documentation.ps1
-  - [ ] IT-Glue-O365-MailboxPermissions-Documentation.ps1
-  - [ ] IT-Glue-O365-Teams-Documentation.ps1
-  - [ ] IT-Glue-O365-UsageReports-Documentation.ps1
-  - [ ] IT-Glue-Server-Documentation.ps1
-  - [x] IT-Glue-SQL-Documentation.ps1
-  - [x] IT-Glue-Unifi-Documentation.ps1
+### Lite Branch:
+ The lite branch is the version that was published on the blog originally. Per requests I've made this version available for everyone just getting started or not requiring whitelisting of each endpoint.
 
 ### Basic setup
+Automatic:
+1. Click on "Deploy on Azure" right here. 
+
+Manual:
 1. Install the [Azure Functions extensions](https://marketplace.visualstudio.com/items?itemName=ms-azuretools.vscode-azurefunctions) for VS Code.
 2. Copy the local.settings.json.example file, and remove the .example extension. 
 3. Populate the AzAPIKey, ITGlueAPIKey & ITGlueURI environmental variables here.
@@ -63,22 +33,12 @@ The current release tries to maintain backwards compatibilty with Kelvin's exist
 Once the gateway is deployed to Azure Functions, you can use the standard IT Glue Powershell module to query it.
 ```PowerShell
 Import-Module ITGlueAPI
-$functionSite = "ITGlueAzureGateway"
-$functionName = "AzGlueForwarder"
-$functionToken = "long_random_password_generated_by_Azure"
-
-# note that the base Uri should end with the = sign.
-Add-ITGlueBaseUri "https://${functionSite}.azurewebsites.net/api/${functionName}?code=${functionToken}&ResourceURI="
+Add-ITGlueBaseUri "https://FUNCTIONNAME.azurewebsites.net/api/"
 Add-ITGlueApiKey "random_password_saved_in_functions_environmental_variables"
 
 Get-ITGluePasswords -organization_id 1234
 ```
 
-While it's running locally you can use something like this for the Base URI:
-```PowerShell
-$functionName = "AzGlueForwarder"
-Add-ITGlueBaseUri "http://localhost:7071/api/${functionName}?ResourceURI="
-```
 
 ### Original README
 See https://www.cyberdrain.com/documenting-with-powershell-handling-it-glue-api-security-and-rate-limiting/ for more information.
@@ -94,4 +54,4 @@ After my previous blogs the comment I’ve received most was worries about the A
 
 ### Contributions & Thanks
 
-The project is open to any PR and/or direct contributors. Feel free to contact kelvin (at) limenetworks.nl if you'd like to be a direct contributor. Special thanks goes out to [AngusWarren](https://github.com/AngusWarren) for the amazing changes to the security of the AzGlue function. 
+The project is open to any PR and/or direct contributors. Feel free to contact kelvin (at) cyberdrain.com if you'd like to be a direct contributor. Special thanks goes out to [AngusWarren](https://github.com/AngusWarren) for the amazing changes to the security of the AzGlue function. 
