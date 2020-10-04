@@ -17,7 +17,7 @@ if ($request.Headers.'x-api-key' -eq $ENV:AzAPIKey) {
   
     #Sending request to ITGlue
    
-    $resource = $request.url -replace "https://$($ENV:WEBSITE_HOSTNAME)/API/", ""
+    $resource = $request.query.path
     #Replace x-api-key with actual key
     $ITGHeaders = @{
         "x-api-key" = $ENV:ITGlueAPIKey
@@ -29,7 +29,7 @@ if ($request.Headers.'x-api-key' -eq $ENV:AzAPIKey) {
     $attempt = 3
     while ($attempt -gt 0 -and -not $SuccessfullQuery) {
         try {
-            $ITGlueRequest = Invoke-RestMethod -Method $Method -ContentType "application/vnd.api+json" -Uri "$($ENV:ITGlueURI)/$resource" -Body $ITGBody -Headers $ITGHeaders
+            $ITGlueRequest = Invoke-RestMethod -Method $Method -ContentType "application/vnd.api+json" -Uri "$($ENV:ITGlueURI)$resource" -Body $ITGBody -Headers $ITGHeaders
             $SuccessfullQuery = $true
         }
         catch {

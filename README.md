@@ -30,10 +30,10 @@ Manual:
     3. If you've got a Key Vault, you can authorise the system managed identity and provide access to the key through the Application settings [using this process](https://docs.microsoft.com/en-us/azure/app-service/app-service-key-vault-references)
 
 ### Basic usage:
-Once the gateway is deployed to Azure Functions, you can use the standard IT Glue Powershell module to query it.
+Once the gateway is deployed to Azure Functions, you can use the standard IT Glue Powershell module to query it. Remember to end the URL with the = symbol.
 ```PowerShell
 Import-Module ITGlueAPI
-Add-ITGlueBaseUri "https://FUNCTIONNAME.azurewebsites.net/api/"
+Add-ITGlueBaseUri "https://FUNCTIONNAME.azurewebsites.net/api/AzForwarder?path="
 Add-ITGlueApiKey "random_password_saved_in_functions_environmental_variables"
 
 Get-ITGluePasswords -organization_id 1234
